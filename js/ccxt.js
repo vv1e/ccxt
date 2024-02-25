@@ -155,6 +155,7 @@ import bitcoincomPro from './src/pro/bitcoincom.js';
 import bitfinexPro from './src/pro/bitfinex.js';
 import bitfinex2Pro from './src/pro/bitfinex2.js';
 import bitgetPro from './src/pro/bitget.js';
+import bithumbPro from './src/pro/bithumb.js';
 import bitmartPro from './src/pro/bitmart.js';
 import bitmexPro from './src/pro/bitmex.js';
 import bitoproPro from './src/pro/bitopro.js';
@@ -320,6 +321,7 @@ const pro = {
     'bitfinex': bitfinexPro,
     'bitfinex2': bitfinex2Pro,
     'bitget': bitgetPro,
+    'bithumb': bithumbPro,
     'bitmart': bitmartPro,
     'bitmex': bitmexPro,
     'bitopro': bitoproPro,

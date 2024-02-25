@@ -6,7 +6,7 @@
 
 //  ---------------------------------------------------------------------------
 import okxRest from '../okx.js';
-import { ArgumentsRequired, AuthenticationError, BadRequest, InvalidNonce } from '../base/errors.js';
+import { ArgumentsRequired, AuthenticationError, BadRequest, ExchangeError, InvalidNonce } from '../base/errors.js';
 import { ArrayCache, ArrayCacheByTimestamp, ArrayCacheBySymbolById, ArrayCacheBySymbolBySide } from '../base/ws/Cache.js';
 import { sha256 } from '../static_dependencies/noble-hashes/sha256.js';
 //  ---------------------------------------------------------------------------
@@ -1262,7 +1262,7 @@ export default class okx extends okxRest {
         await this.loadMarkets();
         await this.authenticate();
         const url = this.getUrl('private', 'private');
-        const messageHash = this.nonce().toString();
+        const messageHash = `createOrderWs${this.uuid16()}`;
         let op = undefined;
         [op, params] = this.handleOptionAndParams(params, 'createOrderWs', 'op', 'batch-orders');
         const args = this.createOrderRequest(symbol, type, side, amount, price, params);
@@ -1278,7 +1278,10 @@ export default class okx extends okxRest {
             'op': op,
             'args': [args],
         };
-        return await this.watch(url, messageHash, request, messageHash);
+        const response = await this.watch(url, messageHash, request, messageHash);
+        const client = this.client(url);
+        delete client.subscriptions[messageHash];
+        return response;
     }
     handlePlaceOrders(client, message) {
         //
@@ -1331,7 +1334,7 @@ export default class okx extends okxRest {
         await this.loadMarkets();
         await this.authenticate();
         const url = this.getUrl('private', 'private');
-        const messageHash = this.nonce().toString();
+        const messageHash = `editOrderWs${this.uuid16()}`;
         let op = undefined;
         [op, params] = this.handleOptionAndParams(params, 'editOrderWs', 'op', 'amend-order');
         const args = this.editOrderRequest(id, symbol, type, side, amount, price, params);
@@ -1340,7 +1343,10 @@ export default class okx extends okxRest {
             'op': op,
             'args': [args],
         };
-        return await this.watch(url, messageHash, this.extend(request, params), messageHash);
+        const response = await this.watch(url, messageHash, this.extend(request, params), messageHash);
+        const client = this.client(url);
+        delete client.subscriptions[messageHash];
+        return response;
     }
     async cancelOrderWs(id, symbol = undefined, params = {}) {
         /**
@@ -1360,7 +1366,7 @@ export default class okx extends okxRest {
         await this.loadMarkets();
         await this.authenticate();
         const url = this.getUrl('private', 'private');
-        const messageHash = this.nonce().toString();
+        const messageHash = `cancelOrderWs${this.uuid16()}`;
         const clientOrderId = this.safeString2(params, 'clOrdId', 'clientOrderId');
         params = this.omit(params, ['clientOrderId', 'clOrdId']);
         const arg = {
@@ -1377,7 +1383,10 @@ export default class okx extends okxRest {
             'op': 'cancel-order',
             'args': [this.extend(arg, params)],
         };
-        return await this.watch(url, messageHash, request, messageHash);
+        const response = await this.watch(url, messageHash, request, messageHash);
+        const client = this.client(url);
+        delete client.subscriptions[messageHash];
+        return response;
     }
     async cancelOrdersWs(ids, symbol = undefined, params = {}) {
         /**
@@ -1400,7 +1409,7 @@ export default class okx extends okxRest {
         await this.loadMarkets();
         await this.authenticate();
         const url = this.getUrl('private', 'private');
-        const messageHash = this.nonce().toString();
+        const messageHash = `cancelOrdersWs${this.uuid16()}`;
         const args = [];
         for (let i = 0; i < idsLength; i++) {
             const arg = {
@@ -1414,7 +1423,10 @@ export default class okx extends okxRest {
             'op': 'batch-cancel-orders',
             'args': args,
         };
-        return await this.watch(url, messageHash, this.deepExtend(request, params), messageHash);
+        const response = await this.watch(url, messageHash, this.deepExtend(request, params), messageHash);
+        const client = this.client(url);
+        delete client.subscriptions[messageHash];
+        return response;
     }
     async cancelAllOrdersWs(symbol = undefined, params = {}) {
         /**
@@ -1436,7 +1448,7 @@ export default class okx extends okxRest {
             throw new BadRequest(this.id + 'cancelAllOrdersWs is only applicable to Option in Portfolio Margin mode, and MMP privilege is required.');
         }
         const url = this.getUrl('private', 'private');
-        const messageHash = this.nonce().toString();
+        const messageHash = `cancelAllOrdersWs${this.uuid16()}`;
         const request = {
             'id': messageHash,
             'op': 'mass-cancel',
@@ -1445,7 +1457,10 @@ export default class okx extends okxRest {
                     'instFamily': market['id'],
                 }, params)],
         };
-        return await this.watch(url, messageHash, request, messageHash);
+        const response = await this.watch(url, messageHash, request, messageHash);
+        const client = this.client(url);
+        delete client.subscriptions[messageHash];
+        return response;
     }
     handleCancelAllOrders(client, message) {
         //
@@ -1494,15 +1509,20 @@ export default class okx extends okxRest {
         //     { event: 'error', msg: "Illegal request: {"op":"subscribe","args":["spot/ticker:BTC-USDT"]}", code: "60012" }
         //     { event: 'error", msg: "channel:ticker,instId:BTC-USDT doesn"t exist", code: "60018" }
         //
-        const errorCode = this.safeInteger(message, 'code');
         try {
-            if (errorCode) {
+            const code = this.safeString(message, 'code');
+            if (code && (code !== '0') && (code !== '2')) { // 2 means that bulk operation partially succeeded
                 const feedback = this.id + ' ' + this.json(message);
-                this.throwExactlyMatchedException(this.exceptions['exact'], errorCode, feedback);
-                const messageString = this.safeValue(message, 'msg');
-                if (messageString !== undefined) {
-                    this.throwBroadlyMatchedException(this.exceptions['broad'], messageString, feedback);
+                const data = this.safeValue(message, 'data', []);
+                for (let i = 0; i < data.length; i++) {
+                    const error = data[i];
+                    const errorCode = this.safeString(error, 'sCode');
+                    const message = this.safeString(error, 'sMsg');
+                    this.throwExactlyMatchedException(this.exceptions['exact'], errorCode, feedback);
+                    this.throwBroadlyMatchedException(this.exceptions['broad'], message, feedback);
                 }
+                this.throwExactlyMatchedException(this.exceptions['exact'], code, feedback);
+                throw new ExchangeError(feedback); // unknown message
             }
         }
         catch (e) {
@@ -1515,7 +1535,14 @@ export default class okx extends okxRest {
                 return false;
             }
             else {
+                const messageHash = this.safeString(message, 'id');
+                if (messageHash in client.subscriptions) {
+                    client.reject(e, messageHash);
+                    delete client.subscriptions[messageHash];
+                    return false;
+                }
                 client.reject(e);
+                return false;
             }
         }
         return message;

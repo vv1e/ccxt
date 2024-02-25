@@ -11,7 +11,7 @@ const { isNode, deepExtend, extend, clone, flatten, unique, indexBy, sortBy, sor
 import { keys as keysFunc, values as valuesFunc, vwap as vwapFunc } from './functions.js';
 // import exceptions from "./errors.js"
 import { // eslint-disable-line object-curly-newline
-ExchangeError, BadSymbol, NullResponse, InvalidAddress, InvalidOrder, NotSupported, BadResponse, AuthenticationError, DDoSProtection, RequestTimeout, NetworkError, ProxyError, ExchangeNotAvailable, ArgumentsRequired, RateLimitExceeded, BadRequest, ExchangeClosedByUser } from "./errors.js";
+    ExchangeError, BadSymbol, NullResponse, InvalidAddress, InvalidOrder, NotSupported, BadResponse, AuthenticationError, DDoSProtection, RequestTimeout, NetworkError, ProxyError, ExchangeNotAvailable, ArgumentsRequired, RateLimitExceeded, BadRequest, ExchangeClosedByUser } from "./errors.js";
 import { Precise } from './Precise.js';
 //-----------------------------------------------------------------------------
 import WsClient from './ws/WsClient.js';
@@ -28,6 +28,7 @@ import totp from './functions/totp.js';
 export default class Exchange {
     constructor(userConfig = {}) {
         this.throttleProp = undefined;
+        this.burst = false;
         this.api = undefined;
         this.userAgent = undefined;
         this.user_agent = undefined;
@@ -603,12 +604,12 @@ export default class Exchange {
         if (this.rateLimit === undefined) {
             throw new Error(this.id + '.rateLimit property is not configured');
         }
+        const capacity = Math.round(1000 / this.rateLimit);
         this.tokenBucket = this.extend({
-            delay: 0.001,
-            capacity: 1,
-            cost: 1,
-            maxCapacity: 1000,
-            refillRate: (this.rateLimit > 0) ? 1 / this.rateLimit : Number.MAX_VALUE,
+            capacity,
+            tokens: capacity,
+            rateLimit: this.rateLimit,
+            burst: this.burst,
         }, this.tokenBucket);
         this.throttler = new Throttler(this.tokenBucket);
     }
@@ -1159,8 +1160,9 @@ export default class Exchange {
                         // add cost here |
                         //               |
                         //               V
-                        client.throttle(cost).then(() => {
+                        client.throttle(cost).then((cachedRequestInfo) => {
                             client.send(message);
+                            cachedRequestInfo.lastResponseTimestamp = this.milliseconds();
                         }).catch((e) => {
                             for (let i = 0; i < missingSubscriptions.length; i++) {
                                 const subscribeHash = missingSubscriptions[i];
@@ -1171,7 +1173,7 @@ export default class Exchange {
                     }
                     else {
                         client.send(message)
-                            .catch((e) => {
+                        .catch((e) => {
                             for (let i = 0; i < missingSubscriptions.length; i++) {
                                 const subscribeHash = missingSubscriptions[i];
                                 delete client.subscriptions[subscribeHash];
@@ -1249,8 +1251,9 @@ export default class Exchange {
                         // add cost here |
                         //               |
                         //               V
-                        client.throttle(cost).then(() => {
+                        client.throttle(cost).then((cachedRequestInfo) => {
                             client.send(message);
+                            cachedRequestInfo.lastResponseTimestamp = this.milliseconds();
                         }).catch((e) => {
                             client.onError(e);
                         });
@@ -2809,7 +2812,7 @@ export default class Exchange {
             const feeCurrencyCode = this.safeString(fee, 'currency');
             if (feeCurrencyCode !== undefined) {
                 const rate = this.safeString(fee, 'rate');
-                const cost = this.safeValue(fee, 'cost');
+                const cost = this.safeString(fee, 'cost');
                 if (Precise.stringEq(cost, '0')) {
                     // omit zero cost fees
                     continue;
@@ -3489,14 +3492,24 @@ export default class Exchange {
     async fetch2(path, api = 'public', method = 'GET', params = {}, headers = undefined, body = undefined, config = {}) {
         if (this.enableRateLimit) {
             const cost = this.calculateRateLimiterCost(api, method, path, params, config);
-            await this.throttle(cost);
+            const cachedRequestInfo = await this.throttle(cost);
+            this.lastRestRequestTimestamp = this.milliseconds();
+            const request = this.sign(path, api, method, params, headers, body);
+            this.last_request_headers = request['headers'];
+            this.last_request_body = request['body'];
+            this.last_request_url = request['url'];
+            const response = await this.fetch(request['url'], request['method'], request['headers'], request['body']);
+            cachedRequestInfo['responseTimestamp'] = this.milliseconds();
+            return response;
         }
-        this.lastRestRequestTimestamp = this.milliseconds();
-        const request = this.sign(path, api, method, params, headers, body);
-        this.last_request_headers = request['headers'];
-        this.last_request_body = request['body'];
-        this.last_request_url = request['url'];
-        return await this.fetch(request['url'], request['method'], request['headers'], request['body']);
+        else {
+            this.lastRestRequestTimestamp = this.milliseconds();
+            const request = this.sign(path, api, method, params, headers, body);
+            this.last_request_headers = request['headers'];
+            this.last_request_body = request['body'];
+            this.last_request_url = request['url'];
+            return await this.fetch(request['url'], request['method'], request['headers'], request['body']);
+        }
     }
     async request(path, api = 'public', method = 'GET', params = {}, headers = undefined, body = undefined, config = {}) {
         return await this.fetch2(path, api, method, params, headers, body, config);

@@ -6,7 +6,7 @@
 
 //  ---------------------------------------------------------------------------
 import Exchange from './abstract/bithumb.js';
-import { ExchangeError, ExchangeNotAvailable, AuthenticationError, BadRequest, PermissionDenied, InvalidAddress, ArgumentsRequired, InvalidOrder } from './base/errors.js';
+import { ExchangeError, ExchangeNotAvailable, AuthenticationError, OrderNotFound, BadRequest, PermissionDenied, InvalidAddress, ArgumentsRequired, InvalidOrder } from './base/errors.js';
 import { Precise } from './base/Precise.js';
 import { DECIMAL_PLACES, SIGNIFICANT_DIGITS, TRUNCATE } from './base/functions/number.js';
 import { sha512 } from './static_dependencies/noble-hashes/sha512.js';
@@ -123,12 +123,13 @@ export default class bithumb extends Exchange {
             },
             'fees': {
                 'trading': {
-                    'maker': this.parseNumber('0.0025'),
-                    'taker': this.parseNumber('0.0025'),
+                    'maker': this.parseNumber('0.0000'),
+                    'taker': this.parseNumber('0.0000'),
                 },
             },
-            'precisionMode': SIGNIFICANT_DIGITS,
+            'precisionMode': DECIMAL_PLACES,
             'exceptions': {
+                '대기주문이 없습니다.': OrderNotFound,
                 'Bad Request(SSL)': BadRequest,
                 'Bad Request(Bad Method)': BadRequest,
                 'Bad Request.(Auth Data)': AuthenticationError,
@@ -167,7 +168,7 @@ export default class bithumb extends Exchange {
                     'KRW': {
                         'limits': {
                             'cost': {
-                                'min': 500,
+                                'min': 5000,
                                 'max': 5000000000,
                             },
                         },
@@ -252,7 +253,7 @@ export default class bithumb extends Exchange {
                     'strike': undefined,
                     'optionType': undefined,
                     'precision': {
-                        'amount': parseInt('4'),
+                        'amount': parseInt('8'),
                         'price': parseInt('4'),
                     },
                     'limits': {
@@ -844,9 +845,6 @@ export default class bithumb extends Exchange {
             if (status === 'closed') {
                 remaining = '0';
             }
-            else if (status !== 'canceled') {
-                remaining = amount;
-            }
         }
         let symbol = undefined;
         const baseId = this.safeString(order, 'order_currency');
@@ -1099,9 +1097,10 @@ export default class bithumb extends Exchange {
                     // https://github.com/ccxt/ccxt/issues/9017
                     return undefined; // no error
                 }
-                const feedback = this.id + ' ' + message;
-                this.throwExactlyMatchedException(this.exceptions, status, feedback);
+                const feedback = `${this.id} ${status} ${message}`;
                 this.throwExactlyMatchedException(this.exceptions, message, feedback);
+                this.throwExactlyMatchedException(this.exceptions, status, feedback);
+
                 throw new ExchangeError(feedback);
             }
         }

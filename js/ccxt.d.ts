@@ -118,6 +118,7 @@ import bitcoincomPro from './src/pro/bitcoincom.js';
 import bitfinexPro from './src/pro/bitfinex.js';
 import bitfinex2Pro from './src/pro/bitfinex2.js';
 import bitgetPro from './src/pro/bitget.js';
+import bithumbPro from './src/pro/bithumb.js'
 import bitmartPro from './src/pro/bitmart.js';
 import bitmexPro from './src/pro/bitmex.js';
 import bitoproPro from './src/pro/bitopro.js';
@@ -283,6 +284,7 @@ declare const pro: {
     bitfinex: typeof bitfinexPro;
     bitfinex2: typeof bitfinex2Pro;
     bitget: typeof bitgetPro;
+    bithumb: typeof bithumbPro;
     bitmart: typeof bitmartPro;
     bitmex: typeof bitmexPro;
     bitopro: typeof bitoproPro;
@@ -351,6 +353,7 @@ declare const ccxt: {
         bitfinex: typeof bitfinexPro;
         bitfinex2: typeof bitfinex2Pro;
         bitget: typeof bitgetPro;
+        bithumb: typeof bithumbPro;
         bitmart: typeof bitmartPro;
         bitmex: typeof bitmexPro;
         bitopro: typeof bitoproPro;

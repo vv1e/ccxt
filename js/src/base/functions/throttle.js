@@ -7,42 +7,75 @@
 //@ts-nocheck
 /*  ------------------------------------------------------------------------ */
 import { now, sleep } from './time.js';
+import { ArrayCache } from '../ws/Cache.js';
 /*  ------------------------------------------------------------------------ */
 class Throttler {
     constructor(config) {
         this.config = {
-            'refillRate': 1.0,
+            'rateLimit': Number.MAX_VALUE,
             'delay': 0.001,
             'capacity': 1.0,
-            'maxCapacity': 2000,
+            'maxCapacity': 1000,
             'tokens': 0,
             'cost': 1.0,
+            'burst': false,
         };
         Object.assign(this.config, config);
         this.queue = [];
         this.running = false;
+        this.cache = [];
     }
     async loop() {
-        let lastTimestamp = now();
+        let i, current, cached, firstResponseTimestamp, lastRequestTimestamp;
         while (this.running) {
-            const { resolver, cost } = this.queue[0];
-            if (this.config['tokens'] >= 0) {
-                this.config['tokens'] -= cost;
-                resolver();
-                this.queue.shift();
-                // contextswitch
-                await Promise.resolve();
-                if (this.queue.length === 0) {
-                    this.running = false;
+            current = now();
+            for (i = 0; i < this.cache.length; ++i) {
+                cached = this.cache[i];
+                if (
+                  (cached.responseTimestamp !== undefined && cached.responseTimestamp + 1000 >= current) ||
+                  (cached.responseTimestamp === undefined && cached.requestTimestamp + 2000 >= current)
+                ) {
+                    break;
+                }
+                this.config.tokens += cached.cost;
+            }
+            if (i > 0) {
+                this.cache = this.cache.slice(i);
+            }
+
+            const { resolver, cost, cachedRequestInfo } = this.queue[0];
+            if (this.config.tokens - cost < 0) {
+                for (i = 0; this.config.tokens - cost  < 0 && i < this.cache.length; ++i) {
+                    cached = this.cache[i]
+                    while (cached.responseTimestamp === undefined && cached.requestTimestamp + 2000 >= now()) {
+                        await sleep(10);
+                    }
+                    this.config.tokens += cached.cost;
+                }
+                firstResponseTimestamp = this.cache[Math.max(i - 1, 0)].responseTimestamp;
+                this.cache = this.cache.slice(i);
+                current = now();
+                if (firstResponseTimestamp + 1000 > current) {
+                    await sleep(firstResponseTimestamp + 1000 - current);
                 }
             }
-            else {
-                await sleep(this.config['delay'] * 1000);
-                const current = now();
-                const elapsed = current - lastTimestamp;
-                lastTimestamp = current;
-                const tokens = this.config['tokens'] + (this.config['refillRate'] * elapsed);
-                this.config['tokens'] = Math.min(tokens, this.config['capacity']);
+
+            if (!this.config.burst && this.cache.length > 0) {
+                lastRequestTimestamp = this.cache.at(-1).requestTimestamp;
+                current = now()
+                if (lastRequestTimestamp + this.config.rateLimit > current) {
+                    await sleep(lastRequestTimestamp + this.config.rateLimit - current);
+                }
+            }
+            this.config.tokens -= cost;
+            cachedRequestInfo.requestTimestamp = now();
+            this.cache.push(cachedRequestInfo);
+            resolver(cachedRequestInfo);
+            this.queue.shift();
+            // contextswitch
+            await Promise.resolve();
+            if (this.queue.length === 0) {
+                this.running = false;
             }
         }
     }
@@ -55,7 +88,12 @@ class Throttler {
             throw new Error('throttle queue is over maxCapacity (' + this.config['maxCapacity'].toString() + '), see https://github.com/ccxt/ccxt/issues/11645#issuecomment-1195695526');
         }
         cost = (cost === undefined) ? this.config['cost'] : cost;
-        this.queue.push({ resolver, cost });
+        const cachedRequestInfo = {
+            cost,
+            requestTimestamp: undefined,
+            responseTimestamp: undefined
+        };
+        this.queue.push({ resolver, cost, cachedRequestInfo });
         if (!this.running) {
             this.running = true;
             this.loop();

@@ -22,7 +22,7 @@ export default class okx extends Exchange {
             'name': 'OKX',
             'countries': ['CN', 'US'],
             'version': 'v5',
-            'rateLimit': 100 * 1.03,
+            'rateLimit': 100,
             'pro': true,
             'certified': true,
             'has': {
@@ -520,11 +520,11 @@ export default class okx extends Exchange {
             },
             'fees': {
                 'trading': {
-                    'taker': this.parseNumber('0.0015'),
+                    'taker': this.parseNumber('0.0008'),
                     'maker': this.parseNumber('0.0010'),
                 },
                 'spot': {
-                    'taker': this.parseNumber('0.0015'),
+                    'taker': this.parseNumber('0.0008'),
                     'maker': this.parseNumber('0.0010'),
                 },
                 'future': {
@@ -1457,7 +1457,7 @@ export default class okx extends Exchange {
                 },
                 'amount': {
                     'min': this.safeNumber(market, 'minSz'),
-                    'max': undefined,
+                    'max': this.safeNumber(market, 'maxLmtSz'),
                 },
                 'price': {
                     'min': undefined,
@@ -2631,6 +2631,11 @@ export default class okx extends Exchange {
             }
             const tradeMode = margin ? marginMode : 'cash';
             request['tdMode'] = tradeMode;
+            // adjust size when buy spot because fee currency is base currency
+            if (side === 'buy') {
+                const okxFee = type === 'market' ? this.fees.trading.taker : this.fees.trading.maker;
+                request['sz'] = this.amountToPrecision(symbol, amount * (1 + okxFee));
+            }
         }
         else if (contract) {
             if (market['swap'] || market['future']) {

@@ -151,8 +151,8 @@ export default class upbit extends Exchange {
                 'trading': {
                     'tierBased': false,
                     'percentage': true,
-                    'maker': this.parseNumber('0.0025'),
-                    'taker': this.parseNumber('0.0025'),
+                    'maker': this.parseNumber('0.0005'),
+                    'taker': this.parseNumber('0.0005'),
                 },
                 'funding': {
                     'tierBased': false,
