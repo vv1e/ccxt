@@ -6,388 +6,642 @@
 
 //  ---------------------------------------------------------------------------
 import bithumbRest from '../bithumb.js';
-import { ArrayCache } from '../base/ws/Cache.js';
-import { ExchangeError } from '../base/errors.js';
+import { ArrayCache, ArrayCacheBySymbolById } from '../base/ws/Cache.js';
+import { sha256 } from '../static_dependencies/noble-hashes/sha256.js';
+import { jwt } from '../base/functions/rsa.js';
 //  ---------------------------------------------------------------------------
 export default class bithumb extends bithumbRest {
     describe() {
         return this.deepExtend(super.describe(), {
             'has': {
                 'ws': true,
-                'watchBalance': false,
+                'watchOrderBook': true,
                 'watchTicker': true,
                 'watchTickers': true,
                 'watchTrades': true,
-                'watchOrderBook': true,
-                'watchOHLCV': false,
+                'watchTradesForSymbols': true,
+                'watchOrders': true,
+                'watchMyTrades': true,
+                'watchBalance': true,
             },
+            'wsHostname': 'ws-api.bithumb.com',
             'urls': {
                 'api': {
-                    'ws': 'wss://pubwss.bithumb.com/pub/ws',
+                    'ws': 'wss://{hostname}/websocket/v1',
                 },
             },
-            'options': {},
-            'streaming': {},
-            'exceptions': {},
+            'options': {
+                'tradesLimit': 1000,
+            },
         });
+    }
+    async watchPublic(symbol, channel, params = {}) {
+        await this.loadMarkets();
+        const market = this.market(symbol);
+        symbol = market['symbol'];
+        const marketId = market['id'];
+        const url = this.implodeParams(this.urls['api']['ws'], {
+            'hostname': this.wsHostname,
+        });
+        this.options[channel] = this.safeValue(this.options, channel, {});
+        this.options[channel][symbol] = true;
+        const symbols = Object.keys(this.options[channel]);
+        const marketIds = this.marketIds(symbols);
+        const request = [
+            {
+                'ticket': this.uuid(),
+            },
+            {
+                'type': channel,
+                'codes': marketIds,
+                // 'isOnlySnapshot': false,
+                // 'isOnlyRealtime': false,
+            },
+        ];
+        const messageHash = channel + ':' + marketId;
+        return await this.watch(url, messageHash, request, messageHash);
+    }
+    async watchPublicMultiple(symbols, channel, params = {}) {
+        await this.loadMarkets();
+        if (symbols === undefined) {
+            symbols = this.symbols;
+        }
+        symbols = this.marketSymbols(symbols);
+        const marketIds = this.marketIds(symbols);
+        const url = this.implodeParams(this.urls['api']['ws'], {
+            'hostname': this.wsHostname,
+        });
+        const messageHashes = [];
+        for (let i = 0; i < marketIds.length; i++) {
+            messageHashes.push(channel + ':' + marketIds[i]);
+        }
+        const request = [
+            {
+                'ticket': this.uuid(),
+            },
+            {
+                'type': channel,
+                'codes': marketIds,
+                // 'isOnlySnapshot': false,
+                // 'isOnlyRealtime': false,
+            },
+        ];
+        return await this.watchMultiple(url, messageHashes, request, messageHashes);
     }
     /**
      * @method
      * @name bithumb#watchTicker
      * @description watches a price ticker, a statistical calculation with the information calculated over the past 24 hours for a specific market
-     * @see https://apidocs.bithumb.com/v1.2.0/reference/%EB%B9%97%EC%8D%B8-%EA%B1%B0%EB%9E%98%EC%86%8C-%EC%A0%95%EB%B3%B4-%EC%88%98%EC%8B%A0
+     * @see https://apidocs.bithumb.com/v2.1.4/reference/%ED%98%84%EC%9E%AC%EA%B0%80-ticker
      * @param {string} symbol unified symbol of the market to fetch the ticker for
      * @param {object} [params] extra parameters specific to the exchange API endpoint
-     * @param {string} [params.channel] the channel to subscribe to, tickers by default. Can be tickers, sprd-tickers, index-tickers, block-tickers
-     * @returns {object} a [ticker structure]{@link https://github.com/ccxt/ccxt/wiki/Manual#ticker-structure}
+     * @returns {object} a [ticker structure]{@link https://docs.ccxt.com/#/?id=ticker-structure}
      */
     async watchTicker(symbol, params = {}) {
-        const url = this.urls['api']['ws'];
-        await this.loadMarkets();
-        const market = this.market(symbol);
-        const messageHash = 'ticker:' + market['symbol'];
-        const request = {
-            'type': 'ticker',
-            'symbols': [market['base'] + '_' + market['quote']],
-            'tickTypes': [this.safeString(params, 'tickTypes', '24H')],
-        };
-        return await this.watch(url, messageHash, this.extend(request, params), messageHash);
+        return await this.watchPublic(symbol, 'ticker');
     }
     /**
      * @method
-     * @name bithumb#watchTickers
-     * @description watches a price ticker, a statistical calculation with the information calculated over the past 24 hours for all markets of a specific list
-     * @see https://apidocs.bithumb.com/v1.2.0/reference/%EB%B9%97%EC%8D%B8-%EA%B1%B0%EB%9E%98%EC%86%8C-%EC%A0%95%EB%B3%B4-%EC%88%98%EC%8B%A0
-     * @param {string[]} symbols unified symbol of the market to fetch the ticker for
+     * @name bithumb#watchTicker
+     * @description watches a price ticker, a statistical calculation with the information calculated over the past 24 hours for a specific market
+     * @see https://apidocs.bithumb.com/v2.1.4/reference/%ED%98%84%EC%9E%AC%EA%B0%80-ticker
+     * @param symbols
      * @param {object} [params] extra parameters specific to the exchange API endpoint
      * @returns {object} a [ticker structure]{@link https://docs.ccxt.com/#/?id=ticker-structure}
      */
     async watchTickers(symbols = undefined, params = {}) {
-        await this.loadMarkets();
-        const url = this.urls['api']['ws'];
-        const marketIds = [];
-        const messageHashes = [];
-        symbols = this.marketSymbols(symbols, undefined, false, true, true);
-        for (let i = 0; i < symbols.length; i++) {
-            const symbol = symbols[i];
-            const market = this.market(symbol);
-            marketIds.push(market['base'] + '_' + market['quote']);
-            messageHashes.push('ticker:' + market['symbol']);
-        }
-        const request = {
-            'type': 'ticker',
-            'symbols': marketIds,
-            'tickTypes': [this.safeString(params, 'tickTypes', '24H')],
-        };
-        const message = this.extend(request, params);
-        const newTicker = await this.watchMultiple(url, messageHashes, message, messageHashes);
+        const newTickers = await this.watchPublicMultiple(symbols, 'ticker');
         if (this.newUpdates) {
-            const result = {};
-            result[newTicker['symbol']] = newTicker;
-            return result;
+            const tickers = {};
+            tickers[newTickers['symbol']] = newTickers;
+            return tickers;
         }
         return this.filterByArray(this.tickers, 'symbol', symbols);
-    }
-    handleTicker(client, message) {
-        //
-        //    {
-        //        "type" : "ticker",
-        //        "content" : {
-        //            "symbol" : "BTC_KRW",           // 통화코드
-        //            "tickType" : "24H",                 // 변동 기준시간- 30M, 1H, 12H, 24H, MID
-        //            "date" : "20200129",                // 일자
-        //            "time" : "121844",                  // 시간
-        //            "openPrice" : "2302",               // 시가
-        //            "closePrice" : "2317",              // 종가
-        //            "lowPrice" : "2272",                // 저가
-        //            "highPrice" : "2344",               // 고가
-        //            "value" : "2831915078.07065789",    // 누적거래금액
-        //            "volume" : "1222314.51355788",  // 누적거래량
-        //            "sellVolume" : "760129.34079004",   // 매도누적거래량
-        //            "buyVolume" : "462185.17276784",    // 매수누적거래량
-        //            "prevClosePrice" : "2326",          // 전일종가
-        //            "chgRate" : "0.65",                 // 변동률
-        //            "chgAmt" : "15",                    // 변동금액
-        //            "volumePower" : "60.80"         // 체결강도
-        //        }
-        //    }
-        //
-        const content = this.safeDict(message, 'content', {});
-        const marketId = this.safeString(content, 'symbol');
-        const symbol = this.safeSymbol(marketId, undefined, '_');
-        const ticker = this.parseWsTicker(content);
-        const messageHash = 'ticker:' + symbol;
-        this.tickers[symbol] = ticker;
-        client.resolve(this.tickers[symbol], messageHash);
-    }
-    parseWsTicker(ticker, market = undefined) {
-        //
-        //    {
-        //        "symbol" : "BTC_KRW",           // 통화코드
-        //        "tickType" : "24H",                 // 변동 기준시간- 30M, 1H, 12H, 24H, MID
-        //        "date" : "20200129",                // 일자
-        //        "time" : "121844",                  // 시간
-        //        "openPrice" : "2302",               // 시가
-        //        "closePrice" : "2317",              // 종가
-        //        "lowPrice" : "2272",                // 저가
-        //        "highPrice" : "2344",               // 고가
-        //        "value" : "2831915078.07065789",    // 누적거래금액
-        //        "volume" : "1222314.51355788",  // 누적거래량
-        //        "sellVolume" : "760129.34079004",   // 매도누적거래량
-        //        "buyVolume" : "462185.17276784",    // 매수누적거래량
-        //        "prevClosePrice" : "2326",          // 전일종가
-        //        "chgRate" : "0.65",                 // 변동률
-        //        "chgAmt" : "15",                    // 변동금액
-        //        "volumePower" : "60.80"         // 체결강도
-        //    }
-        //
-        const date = this.safeString(ticker, 'date', '');
-        const time = this.safeString(ticker, 'time', '');
-        const datetime = date.slice(0, 4) + '-' + date.slice(4, 6) + '-' + date.slice(6, 8) + 'T' + time.slice(0, 2) + ':' + time.slice(2, 4) + ':' + time.slice(4, 6);
-        const marketId = this.safeString(ticker, 'symbol');
-        return this.safeTicker({
-            'symbol': this.safeSymbol(marketId, market, '_'),
-            'timestamp': this.parse8601(datetime),
-            'datetime': datetime,
-            'high': this.safeString(ticker, 'highPrice'),
-            'low': this.safeString(ticker, 'lowPrice'),
-            'bid': undefined,
-            'bidVolume': this.safeString(ticker, 'buyVolume'),
-            'ask': undefined,
-            'askVolume': this.safeString(ticker, 'sellVolume'),
-            'vwap': undefined,
-            'open': this.safeString(ticker, 'openPrice'),
-            'close': this.safeString(ticker, 'closePrice'),
-            'last': undefined,
-            'previousClose': this.safeString(ticker, 'prevClosePrice'),
-            'change': this.safeString(ticker, 'chgAmt'),
-            'percentage': this.safeString(ticker, 'chgRate'),
-            'average': undefined,
-            'baseVolume': this.safeString(ticker, 'volume'),
-            'quoteVolume': this.safeString(ticker, 'value'),
-            'info': ticker,
-        }, market);
-    }
-    /**
-     * @method
-     * @name bithumb#watchOrderBook
-     * @see https://apidocs.bithumb.com/v1.2.0/reference/%EB%B9%97%EC%8D%B8-%EA%B1%B0%EB%9E%98%EC%86%8C-%EC%A0%95%EB%B3%B4-%EC%88%98%EC%8B%A0
-     * @description watches information on open orders with bid (buy) and ask (sell) prices, volumes and other data
-     * @param {string} symbol unified symbol of the market to fetch the order book for
-     * @param {int} [limit] the maximum amount of order book entries to return
-     * @param {object} [params] extra parameters specific to the exchange API endpoint
-     * @returns {object} A dictionary of [order book structures]{@link https://github.com/ccxt/ccxt/wiki/Manual#order-book-structure} indexed by market symbols
-     */
-    async watchOrderBook(symbol, limit = undefined, params = {}) {
-        await this.loadMarkets();
-        const url = this.urls['api']['ws'];
-        const market = this.market(symbol);
-        symbol = market['symbol'];
-        const messageHash = 'orderbook' + ':' + symbol;
-        const request = {
-            'type': 'orderbookdepth',
-            'symbols': [market['base'] + '_' + market['quote']],
-        };
-        const orderbook = await this.watch(url, messageHash, this.extend(request, params), messageHash);
-        return orderbook.limit();
-    }
-    handleOrderBook(client, message) {
-        //
-        //    {
-        //        "type" : "orderbookdepth",
-        //            "content" : {
-        //            "list" : [
-        //                {
-        //                    "symbol" : "BTC_KRW",
-        //                    "orderType" : "ask",        // 주문타입 – bid / ask
-        //                    "price" : "10593000",       // 호가
-        //                    "quantity" : "1.11223318",  // 잔량
-        //                    "total" : "3"               // 건수
-        //                },
-        //                {"symbol" : "BTC_KRW", "orderType" : "ask", "price" : "10596000", "quantity" : "0.5495", "total" : "8"},
-        //                {"symbol" : "BTC_KRW", "orderType" : "ask", "price" : "10598000", "quantity" : "18.2085", "total" : "10"},
-        //                {"symbol" : "BTC_KRW", "orderType" : "bid", "price" : "10532000", "quantity" : "0", "total" : "0"},
-        //                {"symbol" : "BTC_KRW", "orderType" : "bid", "price" : "10572000", "quantity" : "2.3324", "total" : "4"},
-        //                {"symbol" : "BTC_KRW", "orderType" : "bid", "price" : "10571000", "quantity" : "1.469", "total" : "3"},
-        //                {"symbol" : "BTC_KRW", "orderType" : "bid", "price" : "10569000", "quantity" : "0.5152", "total" : "2"}
-        //            ],
-        //            "datetime":1580268255864325     // 일시
-        //        }
-        //    }
-        //
-        const content = this.safeDict(message, 'content', {});
-        const list = this.safeList(content, 'list', []);
-        const first = this.safeDict(list, 0, {});
-        const marketId = this.safeString(first, 'symbol');
-        const symbol = this.safeSymbol(marketId, undefined, '_');
-        const timestampStr = this.safeString(content, 'datetime');
-        const timestamp = this.parseToInt(timestampStr.slice(0, 13));
-        if (!(symbol in this.orderbooks)) {
-            const ob = this.orderBook();
-            ob['symbol'] = symbol;
-            this.orderbooks[symbol] = ob;
-        }
-        const orderbook = this.orderbooks[symbol];
-        this.handleDeltas(orderbook, list);
-        orderbook['timestamp'] = timestamp;
-        orderbook['datetime'] = this.iso8601(timestamp);
-        const messageHash = 'orderbook' + ':' + symbol;
-        client.resolve(orderbook, messageHash);
-    }
-    handleDelta(orderbook, delta) {
-        //
-        //    {
-        //        symbol: "ETH_BTC",
-        //        orderType: "bid",
-        //        price: "0.07349517",
-        //        quantity: "0",
-        //        total: "0",
-        //    }
-        //
-        const sideId = this.safeString(delta, 'orderType');
-        const side = (sideId === 'bid') ? 'bids' : 'asks';
-        const bidAsk = this.parseBidAsk(delta, 'price', 'quantity');
-        const orderbookSide = orderbook[side];
-        orderbookSide.storeArray(bidAsk);
-    }
-    handleDeltas(orderbook, deltas) {
-        for (let i = 0; i < deltas.length; i++) {
-            this.handleDelta(orderbook, deltas[i]);
-        }
     }
     /**
      * @method
      * @name bithumb#watchTrades
      * @description get the list of most recent trades for a particular symbol
-     * @see https://apidocs.bithumb.com/v1.2.0/reference/%EB%B9%97%EC%8D%B8-%EA%B1%B0%EB%9E%98%EC%86%8C-%EC%A0%95%EB%B3%B4-%EC%88%98%EC%8B%A0
+     * @see https://apidocs.bithumb.com/v2.1.4/reference/%EC%B2%B4%EA%B2%B0-trade
      * @param {string} symbol unified symbol of the market to fetch trades for
      * @param {int} [since] timestamp in ms of the earliest trade to fetch
      * @param {int} [limit] the maximum amount of trades to fetch
      * @param {object} [params] extra parameters specific to the exchange API endpoint
-     * @returns {object[]} a list of [trade structures]{@link https://github.com/ccxt/ccxt/wiki/Manual#public-trades}
+     * @returns {object[]} a list of [trade structures]{@link https://docs.ccxt.com/#/?id=public-trades}
      */
     async watchTrades(symbol, since = undefined, limit = undefined, params = {}) {
+        return await this.watchTradesForSymbols([symbol], since, limit, params);
+    }
+    /**
+     * @method
+     * @name bithumb#watchTradesForSymbols
+     * @description get the list of most recent trades for a list of symbols
+     * @see https://apidocs.bithumb.com/v2.1.4/reference/%EC%B2%B4%EA%B2%B0-trade
+     * @param {string[]} symbols unified symbol of the market to fetch trades for
+     * @param {int} [since] timestamp in ms of the earliest trade to fetch
+     * @param {int} [limit] the maximum amount of trades to fetch
+     * @param {object} [params] extra parameters specific to the exchange API endpoint
+     * @returns {object[]} a list of [trade structures]{@link https://docs.ccxt.com/#/?id=public-trades}
+     */
+    async watchTradesForSymbols(symbols, since = undefined, limit = undefined, params = {}) {
         await this.loadMarkets();
-        const url = this.urls['api']['ws'];
-        const market = this.market(symbol);
-        symbol = market['symbol'];
-        const messageHash = 'trade:' + symbol;
-        const request = {
-            'type': 'transaction',
-            'symbols': [market['base'] + '_' + market['quote']],
-        };
-        const trades = await this.watch(url, messageHash, this.extend(request, params), messageHash);
+        symbols = this.marketSymbols(symbols, undefined, false, true, true);
+        const channel = 'trade';
+        const messageHashes = [];
+        const url = this.implodeParams(this.urls['api']['ws'], {
+            'hostname': this.wsHostname,
+        });
+        if (symbols !== undefined) {
+            for (let i = 0; i < symbols.length; i++) {
+                const market = this.market(symbols[i]);
+                const marketId = market['id'];
+                const symbol = market['symbol'];
+                this.options[channel] = this.safeValue(this.options, channel, {});
+                this.options[channel][symbol] = true;
+                messageHashes.push(channel + ':' + marketId);
+            }
+        }
+        const optionSymbols = Object.keys(this.options[channel]);
+        const marketIds = this.marketIds(optionSymbols);
+        const request = [
+            {
+                'ticket': this.uuid(),
+            },
+            {
+                'type': channel,
+                'codes': marketIds,
+                // 'isOnlySnapshot': false,
+                // 'isOnlyRealtime': false,
+            },
+        ];
+        const trades = await this.watchMultiple(url, messageHashes, request, messageHashes);
         if (this.newUpdates) {
-            limit = trades.getLimit(symbol, limit);
+            const first = this.safeValue(trades, 0);
+            const tradeSymbol = this.safeString(first, 'symbol');
+            limit = trades.getLimit(tradeSymbol, limit);
         }
         return this.filterBySinceLimit(trades, since, limit, 'timestamp', true);
     }
-    handleTrades(client, message) {
-        //
-        //    {
-        //        "type" : "transaction",
-        //        "content" : {
-        //            "list" : [
-        //                {
-        //                    "symbol" : "BTC_KRW",
-        //                    "buySellGb" : "1",
-        //                    "contPrice" : "10579000",
-        //                    "contQty" : "0.01",
-        //                    "contAmt" : "105790.00",
-        //                    "contDtm" : "2020-01-29 12:24:18.830039",
-        //                    "updn" : "dn"
-        //                }
-        //            ]
-        //        }
-        //    }
-        //
-        const content = this.safeDict(message, 'content', {});
-        const rawTrades = this.safeList(content, 'list', []);
-        for (let i = 0; i < rawTrades.length; i++) {
-            const rawTrade = rawTrades[i];
-            const marketId = this.safeString(rawTrade, 'symbol');
-            const symbol = this.safeSymbol(marketId, undefined, '_');
-            if (!(symbol in this.trades)) {
-                const limit = this.safeInteger(this.options, 'tradesLimit', 1000);
-                const stored = new ArrayCache(limit);
-                this.trades[symbol] = stored;
-            }
-            const trades = this.trades[symbol];
-            const parsed = this.parseWsTrade(rawTrade);
-            trades.append(parsed);
-            const messageHash = 'trade' + ':' + symbol;
-            client.resolve(trades, messageHash);
+    /**
+     * @method
+     * @name bithumb#watchOrderBook
+     * @description watches information on open orders with bid (buy) and ask (sell) prices, volumes and other data
+     * @see https://apidocs.bithumb.com/v2.1.4/reference/%ED%98%B8%EA%B0%80-orderbook
+     * @param {string} symbol unified symbol of the market to fetch the order book for
+     * @param {int} [limit] the maximum amount of order book entries to return
+     * @param {object} [params] extra parameters specific to the exchange API endpoint
+     * @returns {object} A dictionary of [order book structures]{@link https://docs.ccxt.com/#/?id=order-book-structure} indexed by market symbols
+     */
+    async watchOrderBook(symbol, limit = undefined, params = {}) {
+        const orderbook = await this.watchPublic(symbol, 'orderbook');
+        return orderbook.limit();
+    }
+    handleTicker(client, message) {
+        // 2020-03-17T23:07:36.511Z "onMessage" <Buffer 7b 22 74 79 70 65 22 3a 22 74 69 63 6b 65 72 22 2c 22 63 6f 64 65 22 3a 22 42 54 43 2d 45 54 48 22 2c 22 6f 70 65 6e 69 6e 67 5f 70 72 69 63 65 22 3a ... >
+        // { type: "ticker",
+        //   "code": "BTC-ETH",
+        //   "opening_price": 0.02295092,
+        //   "high_price": 0.02295092,
+        //   "low_price": 0.02161249,
+        //   "trade_price": 0.02161249,
+        //   "prev_closing_price": 0.02185802,
+        //   "acc_trade_price": 2.32732482,
+        //   "change": "FALL",
+        //   "change_price": 0.00024553,
+        //   "signed_change_price": -0.00024553,
+        //   "change_rate": 0.0112329479,
+        //   "signed_change_rate": -0.0112329479,
+        //   "ask_bid": "ASK",
+        //   "trade_volume": 2.12,
+        //   "acc_trade_volume": 106.11798418,
+        //   "trade_date": "20200317",
+        //   "trade_time": "215843",
+        //   "trade_timestamp": 1584482323000,
+        //   "acc_ask_volume": 90.16935908,
+        //   "acc_bid_volume": 15.9486251,
+        //   "highest_52_week_price": 0.03537414,
+        //   "highest_52_week_date": "2019-04-08",
+        //   "lowest_52_week_price": 0.01614901,
+        //   "lowest_52_week_date": "2019-09-06",
+        //   "trade_status": null,
+        //   "market_state": "ACTIVE",
+        //   "market_state_for_ios": null,
+        //   "is_trading_suspended": false,
+        //   "delisting_date": null,
+        //   "market_warning": "NONE",
+        //   "timestamp": 1584482323378,
+        //   "acc_trade_price_24h": 2.5955306323568927,
+        //   "acc_trade_volume_24h": 118.38798416,
+        //   "stream_type": "SNAPSHOT" }
+        const marketId = this.safeString(message, 'code');
+        const messageHash = 'ticker:' + marketId;
+        const ticker = this.parseTicker(message);
+        const symbol = ticker['symbol'];
+        this.tickers[symbol] = ticker;
+        client.resolve(ticker, messageHash);
+    }
+    handleOrderBook(client, message) {
+        // { type: "orderbook",
+        //   "code": "BTC-ETH",
+        //   "timestamp": 1584486737444,
+        //   "total_ask_size": 16.76384456,
+        //   "total_bid_size": 168.9020623,
+        //   "orderbook_units":
+        //    [ { ask_price: 0.02295077,
+        //        "bid_price": 0.02161249,
+        //        "ask_size": 3.57100696,
+        //        "bid_size": 22.5303265 },
+        //      { ask_price: 0.02295078,
+        //        "bid_price": 0.02152658,
+        //        "ask_size": 0.52451651,
+        //        "bid_size": 2.30355128 },
+        //      { ask_price: 0.02295086,
+        //        "bid_price": 0.02150802,
+        //        "ask_size": 1.585,
+        //        "bid_size": 5 }, ... ],
+        //   "stream_type": "SNAPSHOT" }
+        const marketId = this.safeString(message, 'code');
+        const symbol = this.safeSymbol(marketId, undefined, '-');
+        const type = this.safeString(message, 'stream_type');
+        const options = this.safeValue(this.options, 'watchOrderBook', {});
+        const limit = this.safeInteger(options, 'limit', 15);
+        if (type === 'SNAPSHOT') {
+            this.orderbooks[symbol] = this.orderBook({}, limit);
         }
+        const orderbook = this.orderbooks[symbol];
+        // bithumb always returns a snapshot of 15 topmost entries
+        // the "REALTIME" deltas are not incremental
+        // therefore we reset the orderbook on each update
+        // and reinitialize it again with new bidasks
+        orderbook.reset({});
+        orderbook['symbol'] = symbol;
+        const bids = orderbook['bids'];
+        const asks = orderbook['asks'];
+        const data = this.safeValue(message, 'orderbook_units', []);
+        for (let i = 0; i < data.length; i++) {
+            const entry = data[i];
+            const ask_price = this.safeFloat(entry, 'ask_price');
+            const ask_size = this.safeFloat(entry, 'ask_size');
+            const bid_price = this.safeFloat(entry, 'bid_price');
+            const bid_size = this.safeFloat(entry, 'bid_size');
+            asks.store(ask_price, ask_size);
+            bids.store(bid_price, bid_size);
+        }
+        const timestamp = this.safeInteger(message, 'timestamp');
+        const datetime = this.iso8601(timestamp);
+        orderbook['timestamp'] = timestamp;
+        orderbook['datetime'] = datetime;
+        const messageHash = 'orderbook:' + marketId;
+        client.resolve(orderbook, messageHash);
+    }
+    handleTrades(client, message) {
+        // { type: "trade",
+        //   "code": "KRW-BTC",
+        //   "timestamp": 1584508285812,
+        //   "trade_date": "2020-03-18",
+        //   "trade_time": "05:11:25",
+        //   "trade_timestamp": 1584508285000,
+        //   "trade_price": 6747000,
+        //   "trade_volume": 0.06499468,
+        //   "ask_bid": "ASK",
+        //   "prev_closing_price": 6774000,
+        //   "change": "FALL",
+        //   "change_price": 27000,
+        //   "sequential_id": 1584508285000002,
+        //   "stream_type": "REALTIME" }
+        const trade = this.parseTrade(message);
+        const symbol = trade['symbol'];
+        let stored = this.safeValue(this.trades, symbol);
+        if (stored === undefined) {
+            const limit = this.safeInteger(this.options, 'tradesLimit', 1000);
+            stored = new ArrayCache(limit);
+            this.trades[symbol] = stored;
+        }
+        stored.append(trade);
+        const marketId = this.safeString(message, 'code');
+        const messageHash = 'trade:' + marketId;
+        client.resolve(stored, messageHash);
+    }
+    async authenticate(params = {}) {
+        this.checkRequiredCredentials();
+        const wsOptions = this.safeDict(this.options, 'ws', {});
+        const authenticated = this.safeString(wsOptions, 'token');
+        if (authenticated === undefined) {
+            const auth = {
+                'access_key': this.apiKey,
+                'nonce': this.uuid(),
+                'timestamp': this.now(),
+            };
+            const token = jwt(auth, this.encode(this.secret), sha256, false);
+            wsOptions['token'] = token;
+            wsOptions['options'] = {
+                'headers': {
+                    'authorization': 'Bearer ' + token,
+                },
+            };
+            this.options['ws'] = wsOptions;
+        }
+        const url = this.urls['api']['ws'] + '/private';
+        const client = this.client(url);
+        return client;
+    }
+    async watchPrivate(symbol, channel, messageHash, params = {}) {
+        await this.authenticate();
+        const request = {
+            'type': channel,
+        };
+        if (symbol !== undefined) {
+            await this.loadMarkets();
+            const market = this.market(symbol);
+            symbol = market['symbol'];
+            const symbols = [symbol];
+            const marketIds = this.marketIds(symbols);
+            request['codes'] = marketIds;
+            messageHash = messageHash + ':' + symbol;
+        }
+        let url = this.implodeParams(this.urls['api']['ws'], {
+            'hostname': this.wsHostname,
+        });
+        url += '/private';
+        const message = [
+            {
+                'ticket': this.uuid(),
+            },
+            request,
+        ];
+        return await this.watch(url, messageHash, message, messageHash);
+    }
+    /**
+     * @method
+     * @name bithumb#watchOrders
+     * @description watches information on multiple orders made by the user
+     * @see https://apidocs.bithumb.com/v2.1.4/reference/%EB%82%B4-%EC%A3%BC%EB%AC%B8-%EB%B0%8F-%EC%B2%B4%EA%B2%B0-myorder
+     * @param {string} symbol unified market symbol of the market orders were made in
+     * @param {int} [since] the earliest time in ms to fetch orders for
+     * @param {int} [limit] the maximum number of order structures to retrieve
+     * @param {object} [params] extra parameters specific to the exchange API endpoint
+     * @returns {object[]} a list of [order structures]{@link https://docs.ccxt.com/#/?id=order-structure}
+     */
+    async watchOrders(symbol = undefined, since = undefined, limit = undefined, params = {}) {
+        await this.loadMarkets();
+        const channel = 'myOrder';
+        const messageHash = 'myOrder';
+        const orders = await this.watchPrivate(symbol, channel, messageHash);
+        if (this.newUpdates) {
+            limit = orders.getLimit(symbol, limit);
+        }
+        return this.filterBySymbolSinceLimit(orders, symbol, since, limit, true);
+    }
+    /**
+     * @method
+     * @name bithumb#watchMyTrades
+     * @description watches information on multiple trades made by the user
+     * @see https://apidocs.bithumb.com/v2.1.4/reference/%EB%82%B4-%EC%A3%BC%EB%AC%B8-%EB%B0%8F-%EC%B2%B4%EA%B2%B0-myorder
+     * @param {string} symbol unified market symbol of the market orders were made in
+     * @param {int} [since] the earliest time in ms to fetch orders for
+     * @param {int} [limit] the maximum number of order structures to retrieve
+     * @param {object} [params] extra parameters specific to the exchange API endpoint
+     * @returns {object[]} a list of [trade structures]{@link https://docs.ccxt.com/#/?id=trade-structure}
+     */
+    async watchMyTrades(symbol = undefined, since = undefined, limit = undefined, params = {}) {
+        await this.loadMarkets();
+        const channel = 'myOrder';
+        const messageHash = 'myTrades';
+        const trades = await this.watchPrivate(symbol, channel, messageHash);
+        if (this.newUpdates) {
+            limit = trades.getLimit(symbol, limit);
+        }
+        return this.filterBySymbolSinceLimit(trades, symbol, since, limit, true);
+    }
+    parseWsOrderStatus(status) {
+        const statuses = {
+            'wait': 'open',
+            'done': 'closed',
+            'cancel': 'canceled',
+            'watch': 'open',
+            'trade': 'open',
+        };
+        return this.safeString(statuses, status, status);
+    }
+    parseWsOrder(order, market = undefined) {
+        //
+        // {
+        //     "type": "myOrder",
+        //     "code": "SGD-XRP",
+        //     "uuid": "ac2dc2a3-fce9-40a2-a4f6-5987c25c438f",
+        //     "ask_bid": "BID",
+        //     "order_type": "limit",
+        //     "state": "trade",
+        //     "price": 0.001453,
+        //     "avg_price": 0.00145372,
+        //     "volume": 30925891.29839369,
+        //     "remaining_volume": 29968038.09235948,
+        //     "executed_volume": 30925891.29839369,
+        //     "trades_count": 1,
+        //     "reserved_fee": 44.23943970238218,
+        //     "remaining_fee": 21.77177967409916,
+        //     "paid_fee": 22.467660028283017,
+        //     "locked": 43565.33112787242,
+        //     "executed_funds": 44935.32005656603,
+        //     "order_timestamp": 1710751590000,
+        //     "timestamp": 1710751597500,
+        //     "stream_type": "REALTIME"
+        // }
+        //
+        const id = this.safeString(order, 'uuid');
+        let side = this.safeStringLower(order, 'ask_bid');
+        if (side === 'bid') {
+            side = 'buy';
+        }
+        else {
+            side = 'sell';
+        }
+        const timestamp = this.parse8601(this.safeString(order, 'order_timestamp'));
+        const status = this.parseWsOrderStatus(this.safeString(order, 'state'));
+        const marketId = this.safeString(order, 'code');
+        market = this.safeMarket(marketId, market);
+        let fee = undefined;
+        const feeCost = this.safeString(order, 'paid_fee');
+        if (feeCost !== undefined) {
+            fee = {
+                'currency': market['quote'],
+                'cost': feeCost,
+            };
+        }
+        return this.safeOrder({
+            'info': order,
+            'id': id,
+            'clientOrderId': undefined,
+            'timestamp': timestamp,
+            'datetime': this.iso8601(timestamp),
+            'lastTradeTimestamp': this.safeString(order, 'trade_timestamp'),
+            'symbol': market['symbol'],
+            'type': this.safeString(order, 'order_type'),
+            'timeInForce': this.safeString(order, 'time_in_force'),
+            'postOnly': undefined,
+            'side': side,
+            'price': this.safeString(order, 'price'),
+            'stopPrice': undefined,
+            'triggerPrice': undefined,
+            'cost': this.safeString(order, 'executed_funds'),
+            'average': this.safeString(order, 'avg_price'),
+            'amount': this.safeString(order, 'volume'),
+            'filled': this.safeString(order, 'executed_volume'),
+            'remaining': this.safeString(order, 'remaining_volume'),
+            'status': status,
+            'fee': fee,
+            'trades': undefined,
+        });
     }
     parseWsTrade(trade, market = undefined) {
-        //
-        //    {
-        //        "symbol" : "BTC_KRW",
-        //        "buySellGb" : "1",
-        //        "contPrice" : "10579000",
-        //        "contQty" : "0.01",
-        //        "contAmt" : "105790.00",
-        //        "contDtm" : "2020-01-29 12:24:18.830039",
-        //        "updn" : "dn"
-        //    }
-        //
-        const marketId = this.safeString(trade, 'symbol');
-        const datetime = this.safeString(trade, 'contDtm');
-        const sideId = this.safeString(trade, 'buySellGb');
+        // see: parseWsOrder
+        let side = this.safeStringLower(trade, 'ask_bid');
+        if (side === 'bid') {
+            side = 'buy';
+        }
+        else {
+            side = 'sell';
+        }
+        const timestamp = this.parse8601(this.safeString(trade, 'trade_timestamp'));
+        const marketId = this.safeString(trade, 'code');
+        market = this.safeMarket(marketId, market);
+        let fee = undefined;
+        const feeCost = this.safeString(trade, 'paid_fee');
+        if (feeCost !== undefined) {
+            fee = {
+                'currency': market['quote'],
+                'cost': feeCost,
+            };
+        }
         return this.safeTrade({
-            'id': undefined,
-            'info': trade,
-            'timestamp': this.parse8601(datetime),
-            'datetime': datetime,
-            'symbol': this.safeSymbol(marketId, market, '_'),
-            'order': undefined,
-            'type': undefined,
-            'side': (sideId === '1') ? 'buy' : 'sell',
+            'id': this.safeString(trade, 'trade_uuid'),
+            'timestamp': timestamp,
+            'datetime': this.iso8601(timestamp),
+            'symbol': market['symbol'],
+            'side': side,
+            'price': this.safeString(trade, 'price'),
+            'amount': this.safeString(trade, 'volume'),
+            'cost': this.safeString(trade, 'executed_funds'),
+            'order': this.safeString(trade, 'uuid'),
             'takerOrMaker': undefined,
-            'price': this.safeString(trade, 'contPrice'),
-            'amount': this.safeString(trade, 'contQty'),
-            'cost': this.safeString(trade, 'contAmt'),
-            'fee': undefined,
+            'type': this.safeString(trade, 'order_type'),
+            'fee': fee,
+            'info': trade,
         }, market);
     }
-    handleErrorMessage(client, message) {
-        //
-        //    {
-        //        "status" : "5100",
-        //        "resmsg" : "Invalid Filter Syntax"
-        //    }
-        //
-        if (!('status' in message)) {
-            return true;
+    handleMyOrder(client, message) {
+        // see: parseWsOrder
+        const tradeId = this.safeString(message, 'trade_uuid');
+        if (tradeId !== undefined) {
+            this.handleMyTrade(client, message);
         }
-        const errorCode = this.safeString(message, 'status');
-        try {
-            if (errorCode !== '0000') {
-                const msg = this.safeString(message, 'resmsg');
-                throw new ExchangeError(this.id + ' ' + msg);
+        this.handleOrder(client, message);
+    }
+    handleMyTrade(client, message) {
+        // see: parseWsOrder
+        let myTrades = this.myTrades;
+        if (myTrades === undefined) {
+            const limit = this.safeInteger(this.options, 'tradesLimit', 1000);
+            myTrades = new ArrayCacheBySymbolById(limit);
+        }
+        const trade = this.parseWsTrade(message);
+        myTrades.append(trade);
+        let messageHash = 'myTrades';
+        client.resolve(myTrades, messageHash);
+        messageHash = 'myTrades:' + trade['symbol'];
+        client.resolve(myTrades, messageHash);
+    }
+    handleOrder(client, message) {
+        const parsed = this.parseWsOrder(message);
+        const symbol = this.safeString(parsed, 'symbol');
+        const orderId = this.safeString(parsed, 'id');
+        if (this.orders === undefined) {
+            const limit = this.safeInteger(this.options, 'ordersLimit', 1000);
+            this.orders = new ArrayCacheBySymbolById(limit);
+        }
+        const cachedOrders = this.orders;
+        const orders = this.safeValue(cachedOrders.hashmap, symbol, {});
+        const order = this.safeValue(orders, orderId);
+        if (order !== undefined) {
+            const fee = this.safeValue(order, 'fee');
+            if (parsed['fee'] === undefined && fee !== undefined) {
+                parsed['fee'] = fee;
             }
-            return true;
+            const fees = this.safeValue(order, 'fees');
+            if (parsed['fees'] === undefined && fees !== undefined) {
+                parsed['fees'] = fees;
+            }
+            parsed['trades'] = this.safeValue(order, 'trades');
+            parsed['timestamp'] = this.safeInteger(order, 'timestamp');
+            parsed['datetime'] = this.safeString(order, 'datetime');
         }
-        catch (e) {
-            client.reject(e);
+        cachedOrders.append(parsed);
+        let messageHash = 'myOrder';
+        client.resolve(this.orders, messageHash);
+        messageHash = messageHash + ':' + symbol;
+        client.resolve(this.orders, messageHash);
+    }
+    /**
+     * @method
+     * @name bithumb#watchBalance
+     * @see https://apidocs.bithumb.com/v2.1.4/reference/%EB%82%B4-%EC%9E%90%EC%82%B0-myasset
+     * @description query for balance and get the amount of funds available for trading or funds locked in orders
+     * @param {object} [params] extra parameters specific to the exchange API endpoint
+     * @returns {object} a [balance structure]{@link https://docs.ccxt.com/#/?id=balance-structure}
+     */
+    async watchBalance(params = {}) {
+        await this.loadMarkets();
+        const channel = 'myAsset';
+        const messageHash = 'myAsset';
+        return await this.watchPrivate(undefined, channel, messageHash);
+    }
+    handleBalance(client, message) {
+        //
+        // {
+        //     "type": "myAsset",
+        //     "assets": [
+        //       {
+        //         "currency": "SGD",
+        //         "balance": 1386929.37231066771348207123,
+        //         "locked": 10329.670127489597585685
+        //       }
+        //     ],
+        //     "asset_timestamp": 1710146517259,
+        //     "timestamp": 1710146517267,
+        //     "stream_type": "REALTIME"
+        // }
+        //
+        const data = this.safeList(message, 'assets', []);
+        const timestamp = this.safeInteger(message, 'timestamp');
+        this.balance['timestamp'] = timestamp;
+        this.balance['datetime'] = this.iso8601(timestamp);
+        for (let i = 0; i < data.length; i++) {
+            const balance = data[i];
+            const currencyId = this.safeString(balance, 'currency');
+            const code = this.safeCurrencyCode(currencyId);
+            const available = this.safeString(balance, 'balance');
+            const frozen = this.safeString(balance, 'locked');
+            const account = this.account();
+            account['free'] = available;
+            account['used'] = frozen;
+            this.balance[code] = account;
+            this.balance = this.safeBalance(this.balance);
         }
-        return true;
+        const messageHash = this.safeString(message, 'type');
+        client.resolve(this.balance, messageHash);
     }
     handleMessage(client, message) {
-        if (!this.handleErrorMessage(client, message)) {
-            return;
-        }
-        const topic = this.safeString(message, 'type');
-        if (topic !== undefined) {
-            const methods = {
-                'ticker': this.handleTicker,
-                'orderbookdepth': this.handleOrderBook,
-                'transaction': this.handleTrades,
-            };
-            const method = this.safeValue(methods, topic);
-            if (method !== undefined) {
-                method.call(this, client, message);
-            }
+        const methods = {
+            'ticker': this.handleTicker,
+            'orderbook': this.handleOrderBook,
+            'trade': this.handleTrades,
+            'myOrder': this.handleMyOrder,
+            'myAsset': this.handleBalance,
+        };
+        const methodName = this.safeString(message, 'type');
+        const method = this.safeValue(methods, methodName);
+        if (method) {
+            method.call(this, client, message);
         }
     }
 }

@@ -38,6 +38,8 @@ interface Exchange {
     privatePostWithdrawsKrw(params?: {}): Promise<implicitReturnType>;
     privatePostDepositsGenerateCoinAddress(params?: {}): Promise<implicitReturnType>;
     privateDeleteOrder(params?: {}): Promise<implicitReturnType>;
+    privateDeleteOrdersOpen(params?: {}): Promise<implicitReturnType>;
+    privateDeleteOrdersUuids(params?: {}): Promise<implicitReturnType>;
 }
 declare abstract class Exchange extends _Exchange {
 }

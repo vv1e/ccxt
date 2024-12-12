@@ -395,8 +395,8 @@ export default class Exchange {
         }, this.tokenBucket);
         this.throttler = new Throttler(this.tokenBucket);
     }
-    throttle(cost = undefined) {
-        return this.throttler.throttle(cost);
+    throttle(cost = undefined, config = {}) {
+        return this.throttler.throttle(cost, config);
     }
     defineRestApiEndpoint(methodName, uppercaseMethod, lowercaseMethod, camelcaseMethod, path, paths, config = {}) {
         const splitPath = path.split(/[^a-zA-Z0-9]/);
@@ -956,7 +956,8 @@ export default class Exchange {
                         // add cost here |
                         //               |
                         //               V
-                        client.throttle(cost).then(() => {
+                        const config = { 'api_rate_limit_group': 'ws' }
+                        client.throttle(cost, config).then(() => {
                             client.send(message);
                         }).catch((e) => {
                             for (let i = 0; i < missingSubscriptions.length; i++) {
@@ -1046,7 +1047,8 @@ export default class Exchange {
                         // add cost here |
                         //               |
                         //               V
-                        client.throttle(cost).then(() => {
+                        const config = { 'api_rate_limit_group': 'ws' }
+                        client.throttle(cost, config).then(() => {
                             client.send(message);
                         }).catch((e) => {
                             client.onError(e);

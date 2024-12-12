@@ -15,25 +15,31 @@ class Throttler {
             'delay': 0.001,
             'capacity': 1.0,
             'maxCapacity': 2000,
-            'tokens': 0,
+            'tokens': {
+                'default': 0
+            },
             'cost': 1.0,
         };
         Object.assign(this.config, config);
-        this.queue = [];
-        this.running = false;
+        this.queue = {
+            'default': []
+        };
+        this.running = {
+            'default': false
+        };
     }
-    async loop() {
+    async loop(api_rate_limit_group) {
         let lastTimestamp = now();
-        while (this.running) {
-            const { resolver, cost } = this.queue[0];
-            if (this.config['tokens'] >= 0) {
-                this.config['tokens'] -= cost;
+        while (this.running[api_rate_limit_group]) {
+            const { resolver, cost } = this.queue[api_rate_limit_group][0];
+            if (this.config['tokens'][api_rate_limit_group] >= 0) {
+                this.config['tokens'][api_rate_limit_group] -= cost;
                 resolver();
-                this.queue.shift();
+                this.queue[api_rate_limit_group].shift();
                 // contextswitch
                 await Promise.resolve();
-                if (this.queue.length === 0) {
-                    this.running = false;
+                if (this.queue[api_rate_limit_group].length === 0) {
+                    this.running[api_rate_limit_group] = false;
                 }
             }
             else {
@@ -41,24 +47,34 @@ class Throttler {
                 const current = now();
                 const elapsed = current - lastTimestamp;
                 lastTimestamp = current;
-                const tokens = this.config['tokens'] + (this.config['refillRate'] * elapsed);
-                this.config['tokens'] = Math.min(tokens, this.config['capacity']);
+                const tokens = this.config['tokens'][api_rate_limit_group] + (this.config['refillRate'] * elapsed);
+                this.config['tokens'][api_rate_limit_group] = Math.min(tokens, this.config['capacity']);
             }
         }
     }
-    throttle(cost = undefined) {
-        let resolver;
+    throttle(cost = undefined, config = {}) {
+        let resolver, api_rate_limit_group;
         const promise = new Promise((resolve, reject) => {
             resolver = resolve;
         });
-        if (this.queue.length > this.config['maxCapacity']) {
-            throw new Error('throttle queue is over maxCapacity (' + this.config['maxCapacity'].toString() + '), see https://github.com/ccxt/ccxt/issues/11645#issuecomment-1195695526');
+        if (config['api_rate_limit_group'] !== undefined) {
+            api_rate_limit_group = config['api_rate_limit_group'];
+        } else {
+            api_rate_limit_group = 'default';
+        }
+        if (this.queue[api_rate_limit_group] === undefined) {
+            this.queue[api_rate_limit_group] = [];
+            this.running[api_rate_limit_group] = false;
+            this.config['tokens'][api_rate_limit_group] = 0;
+        }
+        if (this.queue[api_rate_limit_group].length > this.config['maxCapacity']) {
+            throw new Error('throttle queue [' + api_rate_limit_group + '] is over maxCapacity (' + this.config['maxCapacity'].toString() + '), see https://github.com/ccxt/ccxt/issues/11645#issuecomment-1195695526');
         }
         cost = (cost === undefined) ? this.config['cost'] : cost;
-        this.queue.push({ resolver, cost });
-        if (!this.running) {
-            this.running = true;
-            this.loop();
+        this.queue[api_rate_limit_group].push({ resolver, cost });
+        if (!this.running[api_rate_limit_group]) {
+            this.running[api_rate_limit_group] = true;
+            this.loop(api_rate_limit_group);
         }
         return promise;
     }

@@ -562,11 +562,11 @@ export default class upbit extends upbitRest {
         const order = this.safeValue(orders, orderId);
         if (order !== undefined) {
             const fee = this.safeValue(order, 'fee');
-            if (fee !== undefined) {
+            if (parsed['fee'] === undefined && fee !== undefined) {
                 parsed['fee'] = fee;
             }
             const fees = this.safeValue(order, 'fees');
-            if (fees !== undefined) {
+            if (parsed['fees'] === undefined && fees !== undefined) {
                 parsed['fees'] = fees;
             }
             parsed['trades'] = this.safeValue(order, 'trades');
