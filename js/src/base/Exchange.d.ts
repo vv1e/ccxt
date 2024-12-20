@@ -17,6 +17,7 @@ export default class Exchange {
     };
     isSandboxModeEnabled: boolean;
     throttleProp: any;
+    burst: boolean;
     sleep: (ms: any) => Promise<unknown>;
     api: any;
     certified: boolean;

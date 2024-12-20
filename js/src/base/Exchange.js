@@ -36,6 +36,7 @@ export default class Exchange {
         this.throttleProp = undefined;
         this.sleep = sleep;
         this.api = undefined;
+        this.burst = false;
         this.certified = false;
         this.pro = false;
         this.countries = undefined;
@@ -392,6 +393,7 @@ export default class Exchange {
             cost: 1,
             maxCapacity: 1000,
             refillRate: (this.rateLimit > 0) ? 1 / this.rateLimit : Number.MAX_VALUE,
+            burst: this.burst,
         }, this.tokenBucket);
         this.throttler = new Throttler(this.tokenBucket);
     }

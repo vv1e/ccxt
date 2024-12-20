@@ -8,6 +8,15 @@
 /*  ------------------------------------------------------------------------ */
 import { now, sleep } from './time.js';
 /*  ------------------------------------------------------------------------ */
+// 
+// rateLimit: rate limit 초기화되는 시간(ms)
+// refillRate: 1 / rateLimit
+// delay: token 이 부족할 때 쉬는 시간 (s)
+// capacity: token 의 최대 수
+// maxCapacity: throttler 큐의 최대 길이 (api call이 maxCapacity 이상 쌓이면 에러)
+// tokens: 현재 사용 가능한 token 수 (api 호출 시 해당 cost 만큼 줄어듦)
+// cost: (rateLimit 시간 동안 몇 번 호출할 수 있는지)의 역수
+//
 class Throttler {
     constructor(config) {
         this.config = {
@@ -15,40 +24,67 @@ class Throttler {
             'delay': 0.001,
             'capacity': 1.0,
             'maxCapacity': 2000,
-            'tokens': {
-                'default': 0
-            },
+            'tokens': {},
             'cost': 1.0,
+            'burst': false,
         };
         Object.assign(this.config, config);
-        this.queue = {
-            'default': []
-        };
-        this.running = {
-            'default': false
-        };
+        this.queue = {};
+        this.running = {};
+        this.lastTimestamp = {};
     }
     async loop(api_rate_limit_group) {
-        let lastTimestamp = now();
-        while (this.running[api_rate_limit_group]) {
-            const { resolver, cost } = this.queue[api_rate_limit_group][0];
-            if (this.config['tokens'][api_rate_limit_group] >= 0) {
-                this.config['tokens'][api_rate_limit_group] -= cost;
-                resolver();
-                this.queue[api_rate_limit_group].shift();
-                // contextswitch
-                await Promise.resolve();
-                if (this.queue[api_rate_limit_group].length === 0) {
-                    this.running[api_rate_limit_group] = false;
-                }
-            }
-            else {
-                await sleep(this.config['delay'] * 1000);
+        if (this.lastTimestamp[api_rate_limit_group] === undefined) {
+            this.lastTimestamp[api_rate_limit_group] = now();
+        }
+        if (this.burst) {
+            while (this.running[api_rate_limit_group]) {
+                const { resolver, cost } = this.queue[api_rate_limit_group][0];
                 const current = now();
-                const elapsed = current - lastTimestamp;
-                lastTimestamp = current;
+                const elapsed = current - this.lastTimestamp[api_rate_limit_group];
+                // 만약 rate limit exceeed 가 된다면 request 전 시간이 아니라 후 시간을 넣어야할 수도 있음.
+                this.lastTimestamp[api_rate_limit_group] = current;
                 const tokens = this.config['tokens'][api_rate_limit_group] + (this.config['refillRate'] * elapsed);
                 this.config['tokens'][api_rate_limit_group] = Math.min(tokens, this.config['capacity']);
+                if (
+                    this.config['tokens'][api_rate_limit_group] - cost >= 0 ||
+                    this.config['tokens'][api_rate_limit_group] === this.config['capacity']
+                ) {
+                    this.config['tokens'][api_rate_limit_group] -= cost;
+                    resolver();
+                    this.queue[api_rate_limit_group].shift();
+                    // contextswitch
+                    await Promise.resolve();
+                    if (this.queue[api_rate_limit_group].length === 0) {
+                        this.running[api_rate_limit_group] = false;
+                    }
+                }
+                else {
+                    await sleep((this.capacity - this.config['tokens'][api_rate_limit_group]) / this.refillRate);
+                }
+            }
+        }
+        else {
+            while (this.running[api_rate_limit_group]) {
+                const { resolver, cost } = this.queue[api_rate_limit_group][0];
+                if (this.config['tokens'][api_rate_limit_group] >= 0) {
+                    this.config['tokens'][api_rate_limit_group] -= cost;
+                    resolver();
+                    this.queue[api_rate_limit_group].shift();
+                    // contextswitch
+                    await Promise.resolve();
+                    if (this.queue[api_rate_limit_group].length === 0) {
+                        this.running[api_rate_limit_group] = false;
+                    }
+                }
+                else {
+                    await sleep(this.config['delay'] * 1000);
+                    const current = now();
+                    const elapsed = current - this.lastTimestamp[api_rate_limit_group];
+                    this.lastTimestamp[api_rate_limit_group] = current;
+                    const tokens = this.config['tokens'][api_rate_limit_group] + (this.config['refillRate'] * elapsed);
+                    this.config['tokens'][api_rate_limit_group] = Math.min(tokens, this.config['capacity']);
+                }
             }
         }
     }
@@ -59,13 +95,19 @@ class Throttler {
         });
         if (config['api_rate_limit_group'] !== undefined) {
             api_rate_limit_group = config['api_rate_limit_group'];
-        } else {
+        }
+        else {
             api_rate_limit_group = 'default';
         }
         if (this.queue[api_rate_limit_group] === undefined) {
             this.queue[api_rate_limit_group] = [];
             this.running[api_rate_limit_group] = false;
-            this.config['tokens'][api_rate_limit_group] = 0;
+            if (this.burst) {
+                this.config['tokens'][api_rate_limit_group] = this.config['capacity'];
+            }
+            else {
+                this.config['tokens'][api_rate_limit_group] = 0;
+            }
         }
         if (this.queue[api_rate_limit_group].length > this.config['maxCapacity']) {
             throw new Error('throttle queue [' + api_rate_limit_group + '] is over maxCapacity (' + this.config['maxCapacity'].toString() + '), see https://github.com/ccxt/ccxt/issues/11645#issuecomment-1195695526');
