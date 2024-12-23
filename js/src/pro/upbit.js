@@ -21,7 +21,6 @@ export default class upbit extends upbitRest {
                 'watchTrades': true,
                 'watchTradesForSymbols': true,
                 'watchOrders': true,
-                'watchMyTrades': true,
                 'watchBalance': true,
             },
             'urls': {
@@ -31,8 +30,23 @@ export default class upbit extends upbitRest {
             },
             'options': {
                 'tradesLimit': 1000,
+                'ws': {
+                    'cost': 60/100,
+                },
             },
         });
+    }
+    listSubscribedTypes(url) {
+        const subscribedTypes = [];
+        const client = this.client(url);
+        const subscriptions = client.subscriptions;
+        for (let i = 0; i < subscriptions.length; i++) {
+            const type = subscriptions[i]['type'];
+            if (type !== undefined) {
+                subscribedTypes.push(type);
+            }
+        }
+        return subscribedTypes;
     }
     async watchPublic(symbol, channel, params = {}) {
         await this.loadMarkets();
@@ -46,19 +60,24 @@ export default class upbit extends upbitRest {
         this.options[channel][symbol] = true;
         const symbols = Object.keys(this.options[channel]);
         const marketIds = this.marketIds(symbols);
-        const request = [
+        const type = {
+            'type': channel,
+            'codes': marketIds,
+            // 'isOnlySnapshot': false,
+            // 'isOnlyRealtime': false,
+        };
+        const message = [
             {
                 'ticket': this.uuid(),
             },
-            {
-                'type': channel,
-                'codes': marketIds,
-                // 'isOnlySnapshot': false,
-                // 'isOnlyRealtime': false,
-            },
+            type,
+            ...this.listSubscribedTypes(url),
         ];
         const messageHash = channel + ':' + marketId;
-        return await this.watch(url, messageHash, request, messageHash);
+        const subscription = {
+            'type': type,
+        };
+        return await this.watch(url, messageHash, message, messageHash, subscription);
     }
     async watchPublicMultiple(symbols, channel, params = {}) {
         await this.loadMarkets();
@@ -74,18 +93,23 @@ export default class upbit extends upbitRest {
         for (let i = 0; i < marketIds.length; i++) {
             messageHashes.push(channel + ':' + marketIds[i]);
         }
-        const request = [
+        const type = {
+            'type': channel,
+            'codes': marketIds,
+            // 'isOnlySnapshot': false,
+            // 'isOnlyRealtime': false,
+        }
+        const message = [
             {
                 'ticket': this.uuid(),
             },
-            {
-                'type': channel,
-                'codes': marketIds,
-                // 'isOnlySnapshot': false,
-                // 'isOnlyRealtime': false,
-            },
+            type,
+            ...this.listSubscribedTypes(url),
         ];
-        return await this.watchMultiple(url, messageHashes, request, messageHashes);
+        const subscription = {
+            'type': type,
+        };
+        return await this.watchMultiple(url, messageHashes, message, messageHashes, subscription);
     }
     /**
      * @method
@@ -162,18 +186,23 @@ export default class upbit extends upbitRest {
         }
         const optionSymbols = Object.keys(this.options[channel]);
         const marketIds = this.marketIds(optionSymbols);
-        const request = [
+        const type = {
+            'type': channel,
+            'codes': marketIds,
+            // 'isOnlySnapshot': false,
+            // 'isOnlyRealtime': false,
+        };
+        const message = [
             {
                 'ticket': this.uuid(),
             },
-            {
-                'type': channel,
-                'codes': marketIds,
-                // 'isOnlySnapshot': false,
-                // 'isOnlyRealtime': false,
-            },
+            type,
+            ...this.listSubscribedTypes(),
         ];
-        const trades = await this.watchMultiple(url, messageHashes, request, messageHashes);
+        const subscription = {
+            'type': type,
+        };
+        const trades = await this.watchMultiple(url, messageHashes, message, messageHashes, subscription);
         if (this.newUpdates) {
             const first = this.safeValue(trades, 0);
             const tradeSymbol = this.safeString(first, 'symbol');
@@ -345,7 +374,7 @@ export default class upbit extends upbitRest {
     }
     async watchPrivate(symbol, channel, messageHash, params = {}) {
         await this.authenticate();
-        const request = {
+        const type = {
             'type': channel,
         };
         if (symbol !== undefined) {
@@ -354,7 +383,7 @@ export default class upbit extends upbitRest {
             symbol = market['symbol'];
             const symbols = [symbol];
             const marketIds = this.marketIds(symbols);
-            request['codes'] = marketIds;
+            type['codes'] = marketIds;
             messageHash = messageHash + ':' + symbol;
         }
         let url = this.implodeParams(this.urls['api']['ws'], {
@@ -365,9 +394,13 @@ export default class upbit extends upbitRest {
             {
                 'ticket': this.uuid(),
             },
-            request,
+            type,
+            ...this.listSubscribedTypes(url),
         ];
-        return await this.watch(url, messageHash, message, messageHash);
+        const subscription = {
+            'type': type,
+        };
+        return await this.watch(url, messageHash, message, messageHash, subscription);
     }
     /**
      * @method
@@ -389,27 +422,6 @@ export default class upbit extends upbitRest {
             limit = orders.getLimit(symbol, limit);
         }
         return this.filterBySymbolSinceLimit(orders, symbol, since, limit, true);
-    }
-    /**
-     * @method
-     * @name upbit#watchMyTrades
-     * @description watches information on multiple trades made by the user
-     * @see https://global-docs.upbit.com/reference/websocket-myorder
-     * @param {string} symbol unified market symbol of the market orders were made in
-     * @param {int} [since] the earliest time in ms to fetch orders for
-     * @param {int} [limit] the maximum number of order structures to retrieve
-     * @param {object} [params] extra parameters specific to the exchange API endpoint
-     * @returns {object[]} a list of [trade structures]{@link https://docs.ccxt.com/#/?id=trade-structure}
-     */
-    async watchMyTrades(symbol = undefined, since = undefined, limit = undefined, params = {}) {
-        await this.loadMarkets();
-        const channel = 'myOrder';
-        const messageHash = 'myTrades';
-        const trades = await this.watchPrivate(symbol, channel, messageHash);
-        if (this.newUpdates) {
-            limit = trades.getLimit(symbol, limit);
-        }
-        return this.filterBySymbolSinceLimit(trades, symbol, since, limit, true);
     }
     parseWsOrderStatus(status) {
         const statuses = {
@@ -528,28 +540,6 @@ export default class upbit extends upbitRest {
         }, market);
     }
     handleMyOrder(client, message) {
-        // see: parseWsOrder
-        const tradeId = this.safeString(message, 'trade_uuid');
-        if (tradeId !== undefined) {
-            this.handleMyTrade(client, message);
-        }
-        this.handleOrder(client, message);
-    }
-    handleMyTrade(client, message) {
-        // see: parseWsOrder
-        let myTrades = this.myTrades;
-        if (myTrades === undefined) {
-            const limit = this.safeInteger(this.options, 'tradesLimit', 1000);
-            myTrades = new ArrayCacheBySymbolById(limit);
-        }
-        const trade = this.parseWsTrade(message);
-        myTrades.append(trade);
-        let messageHash = 'myTrades';
-        client.resolve(myTrades, messageHash);
-        messageHash = 'myTrades:' + trade['symbol'];
-        client.resolve(myTrades, messageHash);
-    }
-    handleOrder(client, message) {
         const parsed = this.parseWsOrder(message);
         const symbol = this.safeString(parsed, 'symbol');
         const orderId = this.safeString(parsed, 'id');

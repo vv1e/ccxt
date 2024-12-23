@@ -3,6 +3,7 @@ import type { Int, Str, Order, OrderBook, Trade, Ticker, Balances, Tickers, Stri
 import Client from '../base/ws/Client.js';
 export default class upbit extends upbitRest {
     describe(): any;
+    listSubscribedTypes(url: string): any[];
     watchPublic(symbol: string, channel: any, params?: {}): Promise<any>;
     watchPublicMultiple(symbols: Strings, channel: any, params?: {}): Promise<any>;
     /**
@@ -77,24 +78,10 @@ export default class upbit extends upbitRest {
      * @returns {object[]} a list of [order structures]{@link https://docs.ccxt.com/#/?id=order-structure}
      */
     watchOrders(symbol?: Str, since?: Int, limit?: Int, params?: {}): Promise<Order[]>;
-    /**
-     * @method
-     * @name upbit#watchMyTrades
-     * @description watches information on multiple trades made by the user
-     * @see https://global-docs.upbit.com/reference/websocket-myorder
-     * @param {string} symbol unified market symbol of the market orders were made in
-     * @param {int} [since] the earliest time in ms to fetch orders for
-     * @param {int} [limit] the maximum number of order structures to retrieve
-     * @param {object} [params] extra parameters specific to the exchange API endpoint
-     * @returns {object[]} a list of [trade structures]{@link https://docs.ccxt.com/#/?id=trade-structure}
-     */
-    watchMyTrades(symbol?: Str, since?: Int, limit?: Int, params?: {}): Promise<Trade[]>;
     parseWsOrderStatus(status: Str): string;
     parseWsOrder(order: any, market?: any): Order;
     parseWsTrade(trade: any, market?: any): Trade;
     handleMyOrder(client: Client, message: any): void;
-    handleMyTrade(client: Client, message: any): void;
-    handleOrder(client: Client, message: any): void;
     /**
      * @method
      * @name upbit#watchBalance
