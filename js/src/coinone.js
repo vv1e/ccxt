@@ -994,6 +994,15 @@ export default class coinone extends Exchange {
                 'currency': quote,
             };
         }
+        let remainQtyString = this.safeString(order, 'remain_qty');
+        const canceledQtyString = this.safeString(order, "canceled_qty");
+        if (remainQtyString === undefined) {
+            remainQtyString = canceledQtyString;
+        }
+        else if (canceledQtyString !== undefined) {
+            remainQtyString = Precise.stringAdd(remainQtyString, canceledQtyString);
+        }
+
         return this.safeOrder({
             'info': order,
             'id': id,
@@ -1013,7 +1022,7 @@ export default class coinone extends Exchange {
             'average': this.safeString(order, 'average_executed_price'),
             'amount': this.safeString2(order, 'qty', 'original_qty'),
             'filled': this.safeString(order, 'executed_qty'),
-            'remaining': this.safeString(order, 'remain_qty'),
+            'remaining': remainQtyString,
             'status': status,
             'fee': fee,
             'trades': undefined,
@@ -1226,12 +1235,25 @@ export default class coinone extends Exchange {
         }
         const response = await this.v2_1PrivatePostOrderCancel(this.extend(request, params));
         //
-        //     {
-        //         "result": "success",
-        //         "errorCode": "0"
-        //     }
+        // {
+        //   "result": "success",
+        //   "error_code": "0",
+        //   "order_id": "d85cc6af-b131-4398-b269-ddbafa760a39",
+        //   "price": "26231000.0",
+        //   "qty": "0.002",
+        //   "remain_qty": "0.0",
+        //   "side": "BUY",
+        //   "original_qty": "0.005",
+        //   "traded_qty": "0.003",
+        //   "canceled_qty": "0.002",
+        //   "fee": "26231.0",
+        //   "fee_rate": "0.001",
+        //   "avg_price": "26231000.0",
+        //   "canceled_at": 1650525935,
+        //   "ordered_at": 1650125935
+        // }
         //
-        return this.safeOrder(response);
+        return this.parseOrder(response, market);
     }
     /**
      * @method
