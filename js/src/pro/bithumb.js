@@ -23,10 +23,9 @@ export default class bithumb extends bithumbRest {
                 'watchOrders': true,
                 'watchBalance': true,
             },
-            'wsHostname': 'ws-api.bithumb.com',
             'urls': {
                 'api': {
-                    'ws': 'wss://{hostname}/websocket/v1',
+                    'ws': 'wss://ws-api.{hostname}/websocket/v1',
                 },
             },
             'options': {
@@ -52,7 +51,7 @@ export default class bithumb extends bithumbRest {
         symbol = market['symbol'];
         const marketId = market['id'];
         const url = this.implodeParams(this.urls['api']['ws'], {
-            'hostname': this.wsHostname,
+            'hostname': this.hostname,
         });
         this.options[channel] = this.safeValue(this.options, channel, {});
         this.options[channel][symbol] = true;
@@ -85,7 +84,7 @@ export default class bithumb extends bithumbRest {
         symbols = this.marketSymbols(symbols);
         const marketIds = this.marketIds(symbols);
         const url = this.implodeParams(this.urls['api']['ws'], {
-            'hostname': this.wsHostname,
+            'hostname': this.hostname,
         });
         const messageHashes = [];
         for (let i = 0; i < marketIds.length; i++) {
@@ -170,7 +169,7 @@ export default class bithumb extends bithumbRest {
         const channel = 'trade';
         const messageHashes = [];
         const url = this.implodeParams(this.urls['api']['ws'], {
-            'hostname': this.wsHostname,
+            'hostname': this.hostname,
         });
         if (symbols !== undefined) {
             for (let i = 0; i < symbols.length; i++) {
@@ -389,7 +388,7 @@ export default class bithumb extends bithumbRest {
             messageHash = messageHash + ':' + symbol;
         }
         let url = this.implodeParams(this.urls['api']['ws'], {
-            'hostname': this.wsHostname,
+            'hostname': this.hostname,
         });
         url += '/private';
         const message = [
