@@ -367,7 +367,10 @@ export default class bithumb extends bithumbRest {
             };
             this.options['ws'] = wsOptions;
         }
-        const url = this.urls['api']['ws'] + '/private';
+        let url = this.implodeParams(this.urls['api']['ws'], {
+            'hostname': this.hostname,
+        });
+        url += '/private';
         const client = this.client(url);
         return client;
     }
