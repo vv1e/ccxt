@@ -161,8 +161,8 @@ export default class coinone extends Exchange {
                 'trading': {
                     'tierBased': false,
                     'percentage': true,
-                    'taker': 0.0001,
-                    'maker': 0,
+                    'taker': 0.0002,
+                    'maker': 0.0002,
                 },
             },
             'precisionMode': TICK_SIZE,
